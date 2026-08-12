@@ -1,0 +1,113 @@
+string URL = "http://dt.suluhbangsamulia.com:9171/getvalue";
+string TOPIC_URGENCY = "{\"device_name\":\"dtwin/koala/urgency\"}";
+string TOPIC_DESC = "{\"device_name\":\"dtwin/koala/desc\"}";
+
+key req_urgency;
+key req_desc;
+
+float current_urgency = 0.0;
+string current_desc = "safe";
+string last_processed_desc = "safe";
+key last_rezed_object_key = NULL_KEY; 
+
+integer COMMS_CHANNEL = -493821; 
+vector TARGET_POS = <138.73068, 169.58400, 20.65641>; // Updated track coordinates
+
+updateDisplay()
+{
+    // --- 1. Update Hologram Visuals & Text ---
+    if (current_urgency >= 2.0)
+    {
+        llSetLinkPrimitiveParamsFast(LINK_SET, [
+            PRIM_COLOR, ALL_SIDES, <1.0, 0.0, 0.0>, 1.0,
+            PRIM_GLOW, ALL_SIDES, 0.4
+        ]);
+        llSetLinkPrimitiveParamsFast(LINK_ROOT, [
+            PRIM_TEXT, "⚠️ CRITICAL THREAT ⚠️\nObstacle: " + llToUpper(current_desc), <1.0, 0.2, 0.2>, 1.0
+        ]);
+    }
+    else if (current_urgency >= 1.0)
+    {
+        llSetLinkPrimitiveParamsFast(LINK_SET, [
+            PRIM_COLOR, ALL_SIDES, <1.0, 0.5, 0.0>, 1.0,
+            PRIM_GLOW, ALL_SIDES, 0.15
+        ]);
+        llSetLinkPrimitiveParamsFast(LINK_ROOT, [
+            PRIM_TEXT, "⚡ WARNING ⚡\nObstacle: " + llToUpper(current_desc), <1.0, 0.7, 0.1>, 1.0
+        ]);
+    }
+    else
+    {
+        llSetLinkPrimitiveParamsFast(LINK_SET, [
+            PRIM_COLOR, ALL_SIDES, <1.0, 1.0, 1.0>, 0.0,
+            PRIM_GLOW, ALL_SIDES, 0.0
+        ]);
+        llSetLinkPrimitiveParamsFast(LINK_ROOT, [
+            PRIM_TEXT, "", <1.0, 1.0, 1.0>, 0.0
+        ]);
+    }
+
+    // --- 2. Dynamic Rezzing & Deletion Logic ---
+    string hazard_name = llStringTrim(current_desc, STRING_TRIM);
+
+    if (current_urgency > 0.0 && hazard_name != "safe" && hazard_name != last_processed_desc)
+    {
+        if (last_rezed_object_key != NULL_KEY)
+        {
+            llRegionSayTo(last_rezed_object_key, COMMS_CHANNEL, "DIE");
+            last_rezed_object_key = NULL_KEY;
+        }
+
+        llOwnerSay("🚨 Rezzing 3D asset at track coordinate: " + hazard_name);
+        llRezAtRoot(hazard_name, TARGET_POS, <0.0, 0.0, 0.0>, ZERO_ROTATION, 0);
+        last_processed_desc = hazard_name; 
+    }
+    else if (current_urgency == 0.0 || hazard_name == "safe")
+    {
+        if (last_rezed_object_key != NULL_KEY)
+        {
+            llOwnerSay("✅ Hazard cleared. Removing 3D asset from tracks.");
+            llRegionSayTo(last_rezed_object_key, COMMS_CHANNEL, "DIE");
+            last_rezed_object_key = NULL_KEY;
+        }
+        last_processed_desc = "safe";
+    }
+}
+
+default
+{
+    state_entry()
+    {
+        llSetTimerEvent(1.5);
+    }
+
+    timer()
+    {
+        req_urgency = llHTTPRequest(URL, [HTTP_METHOD, "POST", HTTP_MIMETYPE, "application/json"], TOPIC_URGENCY);
+        req_desc = llHTTPRequest(URL, [HTTP_METHOD, "POST", HTTP_MIMETYPE, "application/json"], TOPIC_DESC);
+    }
+
+    object_rez(key id)
+    {
+        last_rezed_object_key = id;
+    }
+
+    http_response(key request_id, integer status, list metadata, string body)
+    {
+        if (status == 200)
+        {
+            string clean_value = llDumpList2String(llParseString2List(body, ["\""], []), "");
+            
+            if (request_id == req_urgency)
+            {
+                current_urgency = (float)clean_value;
+            }
+            else if (request_id == req_desc)
+            {
+                current_desc = clean_value;
+            }
+            
+            updateDisplay(); 
+        }
+    }
+}
