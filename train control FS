@@ -1,0 +1,111 @@
+// Configuration
+string API_URL = "http://dt.suluhbangsamulia.com:9171/setvalue";
+string DEVICE_TOPIC = "dtwin/koala/train";
+vector TEXT_COLOR = <1.0, 1.0, 1.0>; // <--- Change color here (RGB format, e.g., <1.0, 1.0, 1.0> is White)
+
+// Dialog Menu Parameters
+integer DIALOG_CHANNEL = -67000;
+list MENU_MAIN = ["Fwd (G1)", "Fwd (G2)", "Fwd (G3)", "Rev (G1)", "🛑 STOP"];
+
+// Memory Tracking
+integer current_direction = 0; // 0=Stop, 1=Fwd, 2=Rev
+integer current_speed = 0;
+key touch_user = NULL_KEY;
+
+// Helper to update the floating text
+update_hover_text() {
+    string dir_str = "Stopped";
+    string gear_str = "0";
+    
+    if (current_direction == 2) {
+        dir_str = "Forward";
+        if (current_speed == 95) gear_str = "1";
+        else if (current_speed == 150) gear_str = "2";
+        else if (current_speed == 200) gear_str = "3";
+    } 
+    else if (current_direction == 1) {
+        dir_str = "Reverse";
+        if (current_speed == 95) gear_str = "1";
+    }
+
+    string display_text = "Direction: " + dir_str + "\nGear: " + gear_str + "\nSpeed: " + (string)current_speed;
+    llSetText(display_text, TEXT_COLOR, 1.0);
+}
+
+// Helper to bundle data and transmit to the MQTT HTTP API
+send_mqtt_payload(integer direction, integer speed) {
+    // Structure JSON exactly as required by the backend
+    string json_body = "{\"device_name\":\"" + DEVICE_TOPIC + "\",\"device_value\":\"" + (string)direction + "," + (string)speed + "\"}";
+    
+    llOwnerSay("Transmitting Twin Data: " + json_body);
+    
+    // Fire the HTTP POST request to your server route
+    llHTTPRequest(API_URL, [
+        HTTP_METHOD, "POST",
+        HTTP_MIMETYPE, "application/json"
+    ], json_body);
+}
+
+default {
+    state_entry() {
+        // Initialize a listener for our popup menu answers
+        llListen(DIALOG_CHANNEL, "", NULL_KEY, "");
+        
+        // Set initial floating text
+        update_hover_text();
+    }
+
+    touch_start(integer total_number) {
+        touch_user = llDetectedKey(0);
+        
+        // Open the selection dialog box for the user who touched it
+        llDialog(touch_user, "\n🚂 Railking Digital Twin Controller\nSelect Speed / Direction Group:", MENU_MAIN, DIALOG_CHANNEL);
+    }
+
+    listen(integer channel, string name, key id, string message) {
+        // Enforce security so only the correct user inputs count
+        if (id != touch_user) return;
+        
+        if (message == "🛑 STOP") {
+            current_direction = 0;
+            current_speed = 0;
+            llOwnerSay("Command: Emergency Stop Sent.");
+            send_mqtt_payload(current_direction, current_speed);
+        }
+        else if (message == "Fwd (G1)") {
+            current_direction = 2; // Inverted logic: Send 2 to make the physical train go forward
+            current_speed = 95;
+            llOwnerSay("Command: Forward - Gear 1");
+            send_mqtt_payload(current_direction, current_speed);
+        }
+        else if (message == "Fwd (G2)") {
+            current_direction = 2; // Inverted logic: Send 2 to make the physical train go forward
+            current_speed = 150;
+            llOwnerSay("Command: Forward - Gear 2");
+            send_mqtt_payload(current_direction, current_speed);
+        }
+        else if (message == "Fwd (G3)") {
+            current_direction = 2; // Inverted logic: Send 2 to make the physical train go forward
+            current_speed = 200;
+            llOwnerSay("Command: Forward - Gear 3");
+            send_mqtt_payload(current_direction, current_speed);
+        }
+        else if (message == "Rev (G1)") {
+            current_direction = 1; // Inverted logic: Send 1 to make the physical train reverse
+            current_speed = 95;
+            llOwnerSay("Command: Safe Reverse - Gear 1");
+            send_mqtt_payload(current_direction, current_speed);
+        }
+        
+        // Update floating text with the new changes
+        update_hover_text();
+    }
+    
+    http_response(key request_id, integer status, list metadata, string body) {
+        if (status == 200 || status == 201) {
+            llOwnerSay("Twin Synced Successfully. Server output: " + body);
+        } else {
+            llOwnerSay("⚠️ Twin Sync Failed. HTTP Status Code: " + (string)status);
+        }
+    }
+}
