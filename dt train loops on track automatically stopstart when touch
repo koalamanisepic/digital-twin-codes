@@ -1,0 +1,153 @@
+// =========================================================================
+// SCRIPT KERETA OPENSIM CATMULL-ROM SPLINE - TOUCH TO LOOP (PLAY/PAUSE)
+// Sumbu Depan Root Prim: Y Negatif (-Y) | Atas: Z Positif (+Z/Langit)
+// =========================================================================
+
+// --- PENGATURAN KECEPATAN ---
+float KECEPATAN_KERETA = 5.0; // Kecepatan dalam meter per detik (Silakan ubah jika terlalu cepat/lambat)
+integer MINI_STEPS = 4; // Kelancaran tikungan (4 sudah ideal)
+
+// Daftar 17 Koordinat Checkpoint Lintasan (Closed Loop)
+list CHECKPOINTS = [
+    <138.86203, 168.50009, 20.30647>, // CP 1, starting coordinate
+    <138.86243, 178.41101, 20.30647>, // CP 2, start of half circle curve
+    <136.65111, 185.88432, 20.30647>, // CP 3
+    <131.19760, 190.95221, 20.30647>, // CP 4
+    <116.50603, 191.24329, 20.30647>, // CP 5
+    <110.71071, 186.38303, 20.30647>, // CP 6 
+    <108.39393, 177.21909, 20.30647>, // CP 7, end of half circle curve
+    <108.40563, 166.45428, 20.35061>, // CP 8
+    <108.37004, 155.11517, 20.35061>, // CP 9
+    <108.36995, 143.16498, 20.30647>, // CP 10, start of half circle curve on the other side
+    <110.10960, 135.99490, 20.30647>, // CP 11
+    <115.01607, 130.73717, 20.30647>, // CP 12
+    <122.14513, 128.13608, 20.30647>, // CP 13
+    <129.72391, 129.19456, 20.30647>, // CP 14
+    <135.66205, 133.90599, 20.30647>, // CP 15
+    <138.86205, 142.78101, 20.30647>, // CP 16, end of half circle curve on the other side
+    <138.86203, 153.50005, 20.30647>  // CP 17
+];
+
+integer total_cps = 17;
+list kfm_data = [];
+integer is_moving = FALSE;
+integer is_initialized = FALSE;
+
+// Fungsi rotasi absolut (Mengunci atap kereta ke langit)
+rotation AmbilRotasiKeTarget(vector asal, vector target) {
+    vector arah = llVecNorm(target - asal);
+    if (llVecMag(arah) == 0.0) return llGetRot();
+
+    arah.z = 0.0; 
+    arah = llVecNorm(arah); 
+
+    vector sumbu_Y = -arah; 
+    vector sumbu_Z = <0.0, 0.0, 1.0>; 
+    vector sumbu_X = sumbu_Y % sumbu_Z;
+
+    return llAxes2Rot(sumbu_X, sumbu_Y, sumbu_Z);
+}
+
+// Rumus Matematika Catmull-Rom Spline
+vector CatmullRom(vector p0, vector p1, vector p2, vector p3, float t) {
+    float t2 = t * t;
+    float t3 = t2 * t;
+    return 0.5 * (
+        (2.0 * p1) +
+        (-p0 + p2) * t +
+        (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 +
+        (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3
+    );
+}
+
+// Menghitung seluruh putaran (1 loop penuh) di awal
+KalkulasiRutePenuh() {
+    kfm_data = [];
+    vector current_pos = llList2Vector(CHECKPOINTS, 0);
+    vector next_cp = llList2Vector(CHECKPOINTS, 1);
+    rotation current_rot = AmbilRotasiKeTarget(current_pos, next_cp);
+    
+    // Matikan animasi yang ada, pindahkan posisi secara paksa ke titik awal
+    llSetKeyframedMotion([], [KFM_COMMAND, KFM_CMD_STOP]);
+    llSetPos(current_pos);
+    llSetRot(current_rot);
+    
+    integer i;
+    for (i = 0; i < total_cps; ++i) {
+        integer idx1 = i;
+        integer idx2 = (i + 1) % total_cps;
+        
+        integer idx0 = (i - 1 + total_cps) % total_cps;
+        integer idx3 = (idx2 + 1) % total_cps;
+        
+        vector p0 = llList2Vector(CHECKPOINTS, idx0);
+        vector p1 = llList2Vector(CHECKPOINTS, idx1);
+        vector p2 = llList2Vector(CHECKPOINTS, idx2);
+        vector p3 = llList2Vector(CHECKPOINTS, idx3);
+        
+        float jarak_segmen = llVecMag(p2 - p1);
+        float durasi_segmen = jarak_segmen / KECEPATAN_KERETA;
+        
+        float waktu_per_step = durasi_segmen / MINI_STEPS;
+        if (waktu_per_step < 0.112) waktu_per_step = 0.112; // Batas minimal KFM OpenSim
+        
+        integer j;
+        for (j = 1; j <= MINI_STEPS; ++j) {
+            float t = (float)j / MINI_STEPS;
+            vector next_pos = CatmullRom(p0, p1, p2, p3, t);
+            
+            vector delta_pos = next_pos - current_pos;
+            rotation target_rot = AmbilRotasiKeTarget(current_pos, next_pos);
+            rotation delta_rot = target_rot / current_rot;
+            
+            kfm_data += [delta_pos, delta_rot, waktu_per_step];
+            
+            current_pos = next_pos;
+            current_rot = target_rot;
+        }
+    }
+}
+
+default {
+    state_entry() {
+        llSetPhysicsMaterial(GRAVITY_MULTIPLIER, 0.0, 0.0, 0.0, 0.0);
+        llSetPrimitiveParams([PRIM_PHYSICS_SHAPE_TYPE, PRIM_PHYSICS_SHAPE_CONVEX]);
+        
+        llOwnerSay("Mengkalkulasi lintasan rel otomatis, mohon tunggu...");
+        KalkulasiRutePenuh();
+        
+        is_moving = FALSE;
+        is_initialized = FALSE;
+        llOwnerSay("System Ready! Klik (Touch) badan kereta untuk Mulai/Berhenti.");
+    }
+    
+    on_rez(integer start_param) {
+        // Penting: Reset script jika di-rez dari inventory agar KFM tidak nge-bug
+        llResetScript(); 
+    }
+
+    touch_start(integer total_number) {
+        // Jika owner atau siapa saja mengklik kereta
+        if (!is_moving) {
+            if (!is_initialized) {
+                // Inisialisasi pergerakan LOOP PERTAMA KALI
+                llSetKeyframedMotion(kfm_data, [
+                    KFM_DATA, KFM_TRANSLATION | KFM_ROTATION,
+                    KFM_MODE, KFM_LOOP // Mode ini yang membuat jalan memutar terus menerus
+                ]);
+                is_initialized = TRUE;
+            } else {
+                // Lanjutkan animasi KFM jika sebelumnya di Pause
+                llSetKeyframedMotion([], [KFM_COMMAND, KFM_CMD_PLAY]);
+            }
+            
+            is_moving = TRUE;
+            llOwnerSay("Kereta Berjalan... (Klik lagi untuk Pause)");
+        } else {
+            // Hentikan sementara (Pause) animasi KFM
+            llSetKeyframedMotion([], [KFM_COMMAND, KFM_CMD_PAUSE]);
+            is_moving = FALSE;
+            llOwnerSay("Kereta Berhenti.");
+        }
+    }
+}
