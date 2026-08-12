@@ -1,0 +1,175 @@
+// --- FIRESTORM MQTT DIGITAL TWIN (TRAIN) ---
+
+
+
+string API_URL = "http://dt.suluhbangsamulia.com:9171/getvalue";
+
+key req_rfid;
+
+key req_speed;
+
+
+
+string latest_rfid = "Waiting...";
+
+float latest_speed = 0.0;
+
+integer is_polling = FALSE;
+
+
+
+update_display() {
+
+    // 1. Update Floating Text
+
+    string display = "🚂 TRAIN DIGITAL TWIN 🚂\n";
+
+    display += "======================\n";
+
+    display += "RFID Checkpoint: " + latest_rfid + "\n";
+
+    display += "Speed: " + (string)latest_speed + " cm/s\n";
+
+    display += "======================\n";
+
+    
+
+    vector color = <0.000, 0.000, 0.000>; // Green when active
+
+    if (!is_polling) {
+
+        color = <1.0, 0.0, 0.0>; // Red when offline
+
+        display = "🛑 MONITOR OFFLINE 🛑\n(Click to Start)";
+
+    } else {
+
+        display += "(Click prim to Stop)";
+
+    }
+
+    
+
+    llSetText(display, color, 1.0);
+
+    
+
+    // 2. Update Glow Effect (Mapped from 0-100 speed scale to 0.0-1.0 glow scale)
+
+    float glow_intensity = latest_speed / 100.0;
+
+    
+
+    // Safety limit to ensure glow doesn't exceed 1.0 or drop below 0.0
+
+    if (glow_intensity > 1.0) glow_intensity = 1.0;
+
+    if (glow_intensity < 0.0) glow_intensity = 0.0;
+
+    
+
+    llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_GLOW, ALL_SIDES, glow_intensity]);
+
+}
+
+
+
+default {
+
+    state_entry() {
+
+        is_polling = FALSE;
+
+        update_display();
+
+    }
+
+
+
+    touch_start(integer total_number) {
+
+        if (is_polling) {
+
+            is_polling = FALSE;
+
+            llSetTimerEvent(0.0);
+
+            llSetLinkPrimitiveParamsFast(LINK_THIS, [PRIM_GLOW, ALL_SIDES, 0.0]); // Turn off glow completely
+
+            llOwnerSay("Train Monitor Stopped.");
+
+            update_display();
+
+        } else {
+
+            is_polling = TRUE;
+
+            update_display();
+
+            llOwnerSay("Train Monitor Started! Polling API every 1.5 seconds...");
+
+            llSetTimerEvent(1.5); // Set to 1.5 seconds as requested
+
+        }
+
+    }
+
+
+
+    timer() {
+
+        // Send JSON request for RFID
+
+        string rfid_payload = llList2Json(JSON_OBJECT, ["device_name", "dtwin/koala/RFID"]);
+
+        req_rfid = llHTTPRequest(API_URL, 
+
+            [HTTP_METHOD, "POST", HTTP_MIMETYPE, "application/json"], 
+
+            rfid_payload);
+
+            
+
+        // Send JSON request for Speed
+
+        string speed_payload = llList2Json(JSON_OBJECT, ["device_name", "dtwin/koala/speed"]);
+
+        req_speed = llHTTPRequest(API_URL, 
+
+            [HTTP_METHOD, "POST", HTTP_MIMETYPE, "application/json"], 
+
+            speed_payload);
+
+    }
+
+
+
+    http_response(key request_id, integer status, list metadata, string body) {
+
+        if (status == 200) {
+
+            if (request_id == req_rfid) {
+
+                // Keep RFID as text since it is a Hex Code
+
+                latest_rfid = body; 
+
+            } else if (request_id == req_speed) {
+
+                // Convert Speed response to float for the glow math
+
+                latest_speed = (float)body; 
+
+            }
+
+            update_display();
+
+        } else {
+
+            llOwnerSay("API Error " + (string)status + ": " + body);
+
+        }
+
+    }
+
+}
