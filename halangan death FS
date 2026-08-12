@@ -1,0 +1,19 @@
+integer COMMS_CHANNEL = -493821;
+
+default
+{
+    state_entry()
+    {
+        // Listens for the clear command from the controller object
+        llListen(COMMS_CHANNEL, "", NULL_KEY, "DIE");
+    }
+
+    listen(integer channel, string name, key id, string message)
+    {
+        if (message == "DIE")
+        {
+            // Instantly deletes itself from the region
+            llDie();
+        }
+    }
+}
